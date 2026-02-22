@@ -29,11 +29,11 @@ Genera SOLO el texto de la descripción, sin JSON ni formato adicional.`
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 30000)
     
-    const response = await fetch('https://n8n-ayym.onrender.com/webhook/postman-webhook', {
+    const response = await fetch('http://localhost:10000/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chatInput: prompt,
+        message: prompt,
         sessionId: `desc-${Date.now()}`
       }),
       signal: controller.signal
@@ -47,8 +47,10 @@ Genera SOLO el texto de la descripción, sin JSON ni formato adicional.`
 
     const data = await response.json()
     
+    const aiResponse = data.output || data.data?.text || 'Lugar de interés turístico con gran valor histórico y cultural.'
+    
     res.status(200).json({ 
-      description: data.output || 'Lugar de interés turístico con gran valor histórico y cultural.'
+      description: aiResponse
     })
     
   } catch (error) {

@@ -207,11 +207,11 @@ JSON RESPONSE:
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 600000) // 2 minutes ---
     
-    const response = await fetch('https://n8n-ayym.onrender.com/webhook/postman-webhook', { 
+    const response = await fetch('http://localhost:10000/chat', { 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chatInput: prompt,
+        message: prompt,
         sessionId: sessionId || `ruta-${Date.now()}`
       }),
       signal: controller.signal
@@ -228,8 +228,9 @@ JSON RESPONSE:
     // Parse AI response
     let tourData
     try {
-      if (data.output) {
-        let cleanOutput = data.output
+      const aiResponse = data.output || data.data?.text || ''
+      if (aiResponse) {
+        let cleanOutput = aiResponse
           .replace(/```json/g, '')
           .replace(/```/g, '')
           .trim()
