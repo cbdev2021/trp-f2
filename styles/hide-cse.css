@@ -1,0 +1,64 @@
+/* Hide Google Custom Search Engine elements */
+.gsc-control-cse,
+.gsc-control-wrapper-cse,
+.gsc-control-searchbox-only,
+.gsc-search-box,
+.gsc-input-box,
+.gsc-search-button,
+.gsc-clear-button,
+.gsc-branding,
+.gsc-adBlock,
+.gsc-above-wrapper-area,
+.gsc-results-wrapper-overlay,
+.gsc-results-wrapper-visible,
+.gsc-tabsArea,
+.gsc-tabHeader,
+.gsc-tab,
+.gsc-refinementsArea,
+.gsc-refinementHeader,
+.gsc-refinementBlock,
+.gsc-orderby,
+.gsc-orderby-label,
+.gsc-orderby-invisible,
+.gsc-stats,
+.gsc-cursor-box,
+.gsc-cursor,
+.gsc-trailing-more-results,
+.gsc-completion-container,
+.gsc-completion-title,
+.gsc-completion-snippet,
+.gcsc-find-more-on-google,
+.gcsc-find-more-on-google-branding {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  overflow: hidden !important;
+}
+
+/* Hide any iframe containing CSE */
+iframe[src*="cse.google.com"],
+iframe[src*="google.com/cse"],
+iframe[name*="cse"],
+iframe[id*="cse"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  width: 0 !important;
+}
+
+/* Hide Google branding and powered by */
+.gsc-branding-text,
+.gsc-branding-img,
+.gsc-branding-img-noclear,
+.gsc-branding-text-noclear,
+[class*="google-branding"],
+[id*="google-branding"] {
+  display: none !important;
+  visibility: hidden !important;
+}
