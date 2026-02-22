@@ -29,7 +29,9 @@ Genera SOLO el texto de la descripción, sin JSON ni formato adicional.`
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 30000)
     
-    const response = await fetch('http://localhost:10000/chat', {
+    // const response = await fetch('http://localhost:10000/chat', {
+    const response = await fetch('http://groq-backend-blond.vercel.app/chat', {
+      
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
