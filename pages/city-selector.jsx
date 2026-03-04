@@ -209,9 +209,25 @@ export default function CitySelector() {
                   const address = data.city || `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`
                   const startingPointTitle = data.specificLocation || (address.split(', ')[0]) || address
                   
+                  // Extraer ciudad de la dirección completa
                   const parts = address.split(', ')
-                  const cityFromAddress = parts[parts.length - 2] || parts[parts.length - 1] || parts[0]
-                  const countryFromAddress = parts[parts.length - 1] || 'País'
+                  let cityFromAddress = data.cityName || 'Ciudad'
+                  let countryFromAddress = data.countryName || 'País'
+                  
+                  // Si no viene del API, extraer manualmente
+                  if (!data.cityName || /^\d+$/.test(data.cityName)) {
+                    for (let i = parts.length - 1; i >= 0; i--) {
+                      const part = parts[i].trim()
+                      if (/^\d+$/.test(part) || /^\d{2}-\d{3}$/.test(part)) continue
+                      if (part.includes('Región') || part.includes('Região') || part.includes('Provincia') || part.includes('Metropolitana') || part.includes('Imediata') || part.includes('Intermediária') || part.includes('Geográfica')) continue
+                      if (countryFromAddress === 'País' || countryFromAddress === data.countryName) {
+                        countryFromAddress = part
+                        continue
+                      }
+                      cityFromAddress = part
+                      break
+                    }
+                  }
                   
                   const cityFromPoint = {
                     city: cityFromAddress,

@@ -10,10 +10,22 @@ import Footer from '../components/Footer'
 
 export default function TourPlanner() {
   const router = useRouter()
-  const { currentStep, rutaGenerada, loading, error, rutaAprobada } = useSelector(state => state.tour)
+  const { currentStep, rutaGenerada, loading, error, rutaAprobada, selectedCity, detectedCity } = useSelector(state => state.tour)
   const [isVisible, setIsVisible] = useState(false)
   const [progress, setProgress] = useState(0)
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
+
+  console.log('TOUR-PLANNER selectedCity:', selectedCity)
+  console.log('TOUR-PLANNER detectedCity:', detectedCity)
+
+  const getCityName = () => {
+    // Usar selectedCity primero si existe y no es código postal
+    const city = selectedCity?.city || detectedCity?.city
+    if (city && /^\d+$/.test(city)) {
+      return detectedCity?.city || null
+    }
+    return city || null
+  }
 
   useEffect(() => {
     setTimeout(() => setIsVisible(true), 300)
@@ -166,7 +178,7 @@ export default function TourPlanner() {
               color: '#2c3e50',
               marginBottom: '1rem',
               letterSpacing: '-0.02em'
-            }}>Creando tu ruta turística personalizada</h2>
+            }}>Creando tu ruta turística personalizada{getCityName() && ` en ${getCityName()}`}</h2>
             
             <p style={{
               color: '#64748b',

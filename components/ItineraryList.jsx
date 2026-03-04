@@ -17,6 +17,28 @@ export default function ItineraryList() {
     return text.replace(/undefined\s*/gi, '').trim() || null
   }
   
+  const cleanCityName = (text) => {
+    if (!text) return 'Ciudad'
+    // Extraer solo el nombre de la ciudad (primera parte antes de coma o número)
+    const parts = text.split(',')
+    for (let part of parts) {
+      const cleaned = part.trim()
+      // Si no es solo números, es el nombre de la ciudad
+      if (cleaned && !/^\d+$/.test(cleaned)) {
+        return cleaned
+      }
+    }
+    return text.replace(/\d+/g, '').trim() || 'Ciudad'
+  }
+  
+  const getCityForTitle = () => {
+    const city = selectedCity?.city || detectedCity?.city
+    if (city && /^\d+$/.test(city)) {
+      return detectedCity?.city || 'Ciudad'
+    }
+    return city || 'Ciudad'
+  }
+  
   const getPointTitle = (punto) => {
     if (punto.orden === 1 && stepE.startingPointTitle) {
       return cleanUndefinedText(stepE.startingPointTitle) || stepE.startingPointTitle
@@ -606,7 +628,9 @@ export default function ItineraryList() {
       
       <div className="itinerary-list">
         <div className="itinerary-header">
-          <h2>🗺️ Ruta Turística - {selectedCity?.name || selectedCity?.city || detectedCity?.city || rutaGenerada.ciudad || 'Ciudad'}</h2>
+          <h2>🗺️ Ruta Turística desde: {getCityForTitle()}</h2>
+
+
           <div className="tour-stats">
             <span>📍 {allPoints.length} puntos</span>
             {/* <span>⏱️ {Math.round(tiempoTotalCalculado/60)}h</span>
