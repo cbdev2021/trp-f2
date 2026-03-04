@@ -55,26 +55,34 @@ const generateCriticalPrompt = (userData) => {
   return preferences.join(' | ') || 'experiencia general'
 }
 
-// Alcance geográfico fijo de 300km para garantizar lugares con fotos
+// Alcance geográfico de 360km
 const determineGeographicScope = (userData, cityName, countryName) => {
   return {
     scope: 'regional',
-    instruction: `Incluir ${cityName} Y ciudades/lugares cercanos en un radio de 300km para máxima variedad de opciones con Wikipedia y fotografías.`
+    instruction: `Incluir ${cityName} Y ciudades/lugares cercanos en un radio de 360km para máxima variedad de opciones.`
   }
 }
 
 export default async function handler(req, res) {
+  console.log('[TOUR-1] 🟢 Iniciando handler');
+  
   if (req.method !== 'POST') {
+    console.log('[TOUR-2] ❌ Método no permitido:', req.method);
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
+  console.log('[TOUR-3] ✅ Método POST validado');
+
   try {
     const { userData, sessionId } = req.body
+    console.log('[TOUR-4] 📦 Datos recibidos:', { sessionId, hasUserData: !!userData });
 
     const fechaHoraInicio = userData.inicioTour || new Date().toISOString().slice(0, 16)
     const fechaHoraFin = userData.finTour || new Date(Date.now() + 8*60*60*1000).toISOString().slice(0, 16)
     const ciudad = userData.selectedCity || userData.detectedCity
     const puntoInicio = userData.ubicacionInicio
+    
+    console.log('[TOUR-5] 📋 Datos extraídos:', { ciudad: ciudad?.city, inicio: fechaHoraInicio, fin: fechaHoraFin });
     
     // Calcular itinerario
     const calcularItinerario = () => {
@@ -105,7 +113,11 @@ export default async function handler(req, res) {
     }
     
     const itinerario = calcularItinerario()
+    console.log('[TOUR-6] 📊 Itinerario calculado:', itinerario);
+    
     const criticalPromptModifiers = generateCriticalPrompt(userData)
+    console.log('[TOUR-7] 🎯 Preferencias generadas, length:', criticalPromptModifiers.length);
+    
     const cityName = ciudad?.city || ciudad?.name || 'Ciudad'
     const countryName = ciudad?.country || 'País'
     
@@ -113,71 +125,52 @@ export default async function handler(req, res) {
     
     const prompt = `You are a professional travel guide creating a route for ${cityName.toUpperCase()}, ${countryName.toUpperCase()}.
 
-🌍 GEOGRAPHIC SCOPE: ${geoScope.instruction}
-📚 WIKIPEDIA REQUIREMENT: ONLY include places that have Wikipedia articles with photographs
-✅ USE ONLY real, specific places that exist within 300km radius AND have Wikipedia coverage
+🎯 ROUTE REQUIREMENTS:
+- Geographic Area: ${cityName} + 360km radius
+- Starting Point: ${puntoInicio?.direccion}
+- Duration: ${itinerario.diasTotales} days, ${itinerario.horasDiarias} per day
+- Total Activities: EXACTLY ${itinerario.totalActividades} activities
+- Activities per Day: ${itinerario.actividadesPorDia}
+- User Preferences: ${criticalPromptModifiers}
 
-ROUTE DETAILS:
-- TARGET AREA: ${cityName}, ${countryName} (radio de 300km para máxima variedad)
-- STARTING POINT: ${puntoInicio?.direccion}
-- DURATION: ${itinerario.diasTotales} days, ${itinerario.horasDiarias} daily
-- ACTIVITIES NEEDED: EXACTLY ${itinerario.totalActividades} activities
-- DISTRIBUTION: ${itinerario.actividadesPorDia} activities per day
-- EXPERIENCE REQUIREMENTS: ${criticalPromptModifiers}
+📍 GEOGRAPHIC RULES:
+- Include places within 360km radius from ${cityName}
+- Prioritize places in ${cityName} first (60-70% of activities)
+- Include nearby cities/attractions for variety (30-40%)
+- Ensure logical travel flow and distances
 
-🚨 MANDATORY WIKIPEDIA PHOTO VERIFICATION FOR ALL CITIES WORLDWIDE
+🎯 EXPERIENCE DISTRIBUTION (MANDATORY):
+${criticalPromptModifiers}
+- STRICTLY follow the 80/20 distribution
+- Match activities to user's experience preferences
+- Respect all restrictions mentioned
 
-🔍 BEFORE INCLUDING ANY PLACE, YOU MUST MENTALLY VERIFY:
+📋 ACTIVITY REQUIREMENTS:
+- Each activity: 60-120 minutes
+- Travel time between activities: 15-30 minutes
+- Total daily time: ${itinerario.minutosPorDia} minutes (${itinerario.horasDiarias})
+- Generate EXACTLY ${itinerario.totalActividades} activities
 
-1. 📚 WIKIPEDIA ARTICLE CHECK:
-   - Does this exact place have a Wikipedia article?
-   - Search mentally: "[Place Name] + [City] Wikipedia"
-   - If NO article exists, EXCLUDE immediately
+✅ INCLUDE:
+- Major museums, monuments, landmarks
+- Historic sites, cathedrals, palaces
+- UNESCO sites, famous parks
+- Cultural centers matching user preferences
 
-2. 📷 PHOTO VERIFICATION CHECK:
-   - Does the Wikipedia article contain photographs?
-   - Are there images in the article or Wikimedia Commons?
-   - If NO photos exist, EXCLUDE immediately
-
-3. 🎯 SIGNIFICANCE CHECK:
-   - Is it a major tourist attraction, museum, monument, or landmark?
-   - Is it historically, culturally, or architecturally significant?
-   - If NOT significant, EXCLUDE immediately
-
-✅ ONLY INCLUDE PLACES THAT PASS ALL 3 CHECKS:
-   • Major museums (National Museum, Art Museum, etc.)
-   • Historical monuments and landmarks
-   • Famous religious buildings (Cathedrals, major churches, temples)
-   • Government buildings and palaces
-   • UNESCO World Heritage sites
-   • Major universities (main campus buildings)
-   • Famous parks and natural landmarks
-   • Historic city centers and main squares
-   • Major cultural centers and theaters
-   • Iconic architectural structures
-
-❌ NEVER INCLUDE:
-   • Restaurants, bars, cafes, nightlife venues
-   • Shopping centers, malls, markets (unless historically significant)
-   • Hotels, private businesses
-   • Generic sports facilities
-   • Modern commercial buildings
-   • Small local attractions without Wikipedia coverage
-
-🚨 CRITICAL RULE: If you have ANY doubt about Wikipedia photos, DO NOT include that place. Better to have fewer places with guaranteed photos than many places without photos.
+❌ EXCLUDE:
+- Restaurants, bars, nightlife (unless user specifically requested)
+- Shopping centers, hotels
+- Generic facilities without significance
 
 INSTRUCTIONS:
-1. ${geoScope.instruction}
-2. RESPECT experience distribution requirements strictly
-3. Each activity: 60-120 minutes + 15min travel
-4. "lugar_fisico" field: exact place name only (must match Wikipedia article title)
-5. "wikipedia_url" field: MANDATORY - exact Wikipedia article URL (e.g., https://es.wikipedia.org/wiki/Palacio_de_La_Moneda)
-6. "wikipedia_image_url" field: MANDATORY - direct URL to main Wikipedia image (e.g., https://upload.wikimedia.org/wikipedia/commons/...)
-7. Generate exactly ${itinerario.totalActividades} activities
-8. ONLY include places where you can provide BOTH wikipedia_url AND wikipedia_image_url
-9. This guarantees every place has photos available
+1. Generate EXACTLY ${itinerario.totalActividades} activities
+2. Distribute ${itinerario.actividadesPorDia} activities per day
+3. Match ${criticalPromptModifiers} preferences
+4. Stay within 360km radius
+5. "wikipedia_url" and "wikipedia_image_url": use empty strings ""
+6. NO comments in JSON
 
-JSON RESPONSE:
+JSON RESPONSE (COMPLETE, NO COMMENTS):
 {
   "titulo": "Ruta Turística por ${cityName}",
   "duracion": "${itinerario.diasTotales} día(s)",
@@ -195,17 +188,25 @@ JSON RESPONSE:
       "costo_estimado": "$0",
       "duracion_min": 30
     }
-    // Add ${itinerario.totalActividades - 1} more activities for ${cityName}
   ],
-  "costo_total_estimado": "[CALCULATE]",
+  "costo_total_estimado": "$0",
   "dias_totales": ${itinerario.diasTotales},
   "actividades_por_dia": ${itinerario.actividadesPorDia},
   "minutos_por_dia": ${itinerario.minutosPorDia}
-}`
+}
+
+Generate complete valid JSON with ALL ${itinerario.totalActividades} activities. NO comments.`
+
+    console.log('[TOUR-8] 📝 Prompt generado, length:', prompt.length);
 
     // Send to AI
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 600000) // 2 minutes ---
+    const timeoutId = setTimeout(() => {
+      console.log('[TOUR-9] ⏱️ TIMEOUT alcanzado (10min)');
+      controller.abort()
+    }, 600000)
+    
+    console.log('[TOUR-10] 🚀 Llamando a IA en http://localhost:10000/chat');
     
     // const response = await fetch('http://localhost:10000/chat', { 
     const response = await fetch('http://groq-backend-blond.vercel.app/chat', {   
@@ -220,47 +221,138 @@ JSON RESPONSE:
     })
     
     clearTimeout(timeoutId)
+    console.log('[TOUR-11] 📡 Respuesta recibida, status:', response.status);
 
     if (!response.ok) {
+      console.log('[TOUR-12] ❌ Respuesta no OK:', response.status, response.statusText);
       throw new Error(`HTTP error! status: ${response.status}`)
     }
 
+    console.log('[TOUR-13] ✅ Respuesta OK, parseando...');
     const data = await response.json()
+    console.log('[TOUR-14] 📊 JSON de respuesta parseado, keys:', Object.keys(data));
     
-    // Parse AI response
+    // Parse AI response con reparación (como n8n)
     let tourData
     try {
       const aiResponse = data.output || data.data?.text || ''
+      console.log('[TOUR-15] 📦 AI Response extraído, length:', aiResponse.length);
+      
       if (aiResponse) {
+        // Limpieza básica (como n8n)
         let cleanOutput = aiResponse
           .replace(/```json/g, '')
           .replace(/```/g, '')
+          .replace(/\/\/.*$/gm, '')  // Eliminar comentarios
+          .replace(/[\n\r\t]/g, ' ')  // Eliminar saltos de línea
           .trim()
+        
+        console.log('[TOUR-16] 🧹 Output limpiado, length:', cleanOutput.length);
         
         // Extract JSON
         const jsonMatch = cleanOutput.match(/{[\s\S]*}/)
         if (jsonMatch) {
           cleanOutput = jsonMatch[0]
+          console.log('[TOUR-17] 🔍 JSON extraído con regex');
         }
         
-        tourData = JSON.parse(cleanOutput)
+        console.log('[TOUR-18] 🔄 Intentando parsear JSON...');
+        
+        // Intentar parsear
+        try {
+          tourData = JSON.parse(cleanOutput)
+          console.log('[TOUR-19] ✅ JSON parseado exitosamente, ruta length:', tourData.ruta?.length);
+        } catch (parseError) {
+          console.log('[TOUR-20] ⚠️ Parseo falló, aplicando reparación...');
+          console.log('[TOUR-20.1] 🔍 Error:', parseError.message);
+          
+          // Reparación (como n8n): eliminar URLs rotas
+          cleanOutput = cleanOutput
+            .replace(/"wikipedia_url"\s*:\s*"[^"]*"/g, '"wikipedia_url":""')
+            .replace(/"wikipedia_image_url"\s*:\s*"[^"]*"/g, '"wikipedia_image_url":""')
+            .replace(/\s+/g, ' ')
+          
+          console.log('[TOUR-21] 🔧 Reparación aplicada, reintentando parseo...');
+          
+          try {
+            tourData = JSON.parse(cleanOutput)
+            console.log('[TOUR-22] ✅ JSON reparado y parseado exitosamente');
+          } catch (repairError) {
+            console.log('[TOUR-22.1] ❌ Reparación falló, extrayendo manualmente...');
+            
+            // EXTRACCIÓN MANUAL: Extraer lo que se pueda con regex
+            try {
+              const nombres = [...cleanOutput.matchAll(/"nombre"\s*:\s*"([^"]+)"/g)].map(m => m[1])
+              const tipos = [...cleanOutput.matchAll(/"tipo"\s*:\s*"([^"]+)"/g)].map(m => m[1])
+              const tiempos = [...cleanOutput.matchAll(/"tiempo"\s*:\s*"([^"]+)"/g)].map(m => m[1])
+              const descripciones = [...cleanOutput.matchAll(/"descripcion"\s*:\s*"([^"]*?)"/g)].map(m => m[1])
+              const lats = [...cleanOutput.matchAll(/"lat"\s*:\s*([\d.-]+)/g)].map(m => parseFloat(m[1]))
+              const lons = [...cleanOutput.matchAll(/"lon"\s*:\s*([\d.-]+)/g)].map(m => parseFloat(m[1]))
+              
+              console.log('[TOUR-22.2] 📊 Extraídos:', { nombres: nombres.length, lats: lats.length });
+              
+              if (nombres.length > 0) {
+                tourData = {
+                  titulo: `Ruta Turística por ${cityName}`,
+                  duracion: `${itinerario.diasTotales} día(s)`,
+                  ruta: nombres.map((nombre, i) => ({
+                    orden: i + 1,
+                    nombre: nombre,
+                    lugar_fisico: nombre,
+                    tipo: tipos[i] || 'lugar de interés',
+                    tiempo: tiempos[i] || `${9 + i}:00-${10 + i}:00`,
+                    descripcion: descripciones[i] || `Visita a ${nombre}`,
+                    coordenadas: {
+                      lat: lats[i] || ciudad?.lat || -33.4489,
+                      lon: lons[i] || ciudad?.lon || -70.6693
+                    },
+                    costo_estimado: '$0',
+                    duracion_min: 90,
+                    wikipedia_url: '',
+                    wikipedia_image_url: ''
+                  })),
+                  costo_total_estimado: '$0',
+                  dias_totales: itinerario.diasTotales,
+                  actividades_por_dia: itinerario.actividadesPorDia,
+                  minutos_por_dia: itinerario.minutosPorDia
+                }
+                console.log('[TOUR-22.3] ✅ Datos extraídos manualmente:', tourData.ruta.length, 'actividades');
+              } else {
+                throw repairError
+              }
+            } catch (extractError) {
+              console.log('[TOUR-22.4] ❌ Extracción manual falló');
+              throw parseError
+            }
+          }
+        }
         
         // Clean data
         if (tourData.ruta) {
+          console.log('[TOUR-23] 🧹 Limpiando datos de ruta...');
           tourData.ruta = tourData.ruta.map(punto => ({
             ...punto,
             nombre: punto.nombre?.replace(/undefined\s*/gi, '').trim() || 'Punto de interés',
             lugar_fisico: punto.lugar_fisico?.replace(/undefined\s*/gi, '').trim() || punto.nombre,
-            descripcion: punto.descripcion?.replace(/undefined\s*/gi, '').trim() || 'Descripción no disponible'
+            descripcion: punto.descripcion?.replace(/undefined\s*/gi, '').trim() || 'Descripción no disponible',
+            wikipedia_url: punto.wikipedia_url || '',
+            wikipedia_image_url: punto.wikipedia_image_url || ''
           }))
+          console.log('[TOUR-24] ✅ Datos limpiados');
         }
         
       } else {
+        console.log('[TOUR-25] ❌ No hay output de IA');
         throw new Error('No output received')
       }
     } catch (error) {
-      console.error('Error parsing JSON:', error)
+      console.error('[TOUR-26] 💥 ERROR en parseo:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack?.split('\n')[0]
+      });
       
+      console.log('[TOUR-27] 🔄 Usando fallback...');
       // Fallback
       tourData = {
         titulo: `Ruta Turística por ${cityName}`,
@@ -287,9 +379,15 @@ JSON RESPONSE:
       }
     }
     
+    console.log('[TOUR-28] ✅ Enviando respuesta exitosa, ruta length:', tourData.ruta?.length);
     res.status(200).json(tourData)
+    
   } catch (error) {
-    console.error('Route generation error:', error)
+    console.error('[TOUR-29] 💥 ERROR FATAL:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack?.split('\n').slice(0, 3)
+    });
     res.status(500).json({ error: 'Error generating route' })
   }
 }
