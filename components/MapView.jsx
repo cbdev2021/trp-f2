@@ -3,8 +3,17 @@ import { useEffect, useRef, useState } from 'react'
 import { eliminarPunto, setSelectedPoint, aprobarRuta, resetTour } from '../store/tourSlice'
 
 export default function MapView() {
-  const { rutaGenerada, rutaAprobada, stepE, selectedPoint } = useSelector(state => state.tour)
+  const { rutaGenerada, rutaAprobada, stepE, selectedPoint, selectedCity, detectedCity } = useSelector(state => state.tour)
   const dispatch = useDispatch()
+  
+  const targetCity = selectedCity || detectedCity
+  const getCityName = () => {
+    const city = targetCity?.city || targetCity?.name
+    if (city && /^\d+$/.test(city)) {
+      return detectedCity?.city || 'Santiago'
+    }
+    return city || 'Santiago'
+  }
   
   const cleanUndefinedText = (text) => {
     if (!text) return null
@@ -42,7 +51,7 @@ export default function MapView() {
   const generateMapsUrl = () => {
     if (allPoints.length === 0) return ''
     
-    const ciudad = userData.selectedCity?.city || userData.detectedCity?.city || 'Santiago'
+    const ciudad = getCityName()
     const origin = encodeURIComponent(`${allPoints[0].nombre}, ${ciudad}`)
     const destination = encodeURIComponent(`${allPoints[allPoints.length - 1].nombre}, ${ciudad}`)
     
@@ -67,8 +76,7 @@ export default function MapView() {
     
     if (pointIndex !== null && allPoints[pointIndex]) {
       const point = allPoints[pointIndex]
-      const ciudad = userData.selectedCity || userData.detectedCity
-      const ciudadNombre = ciudad?.city || ciudad?.name || 'Santiago'
+      const ciudadNombre = getCityName()
       
       // Usar lugar_fisico si existe, sino usar nombre
       const lugarBusqueda = point.lugar_fisico || point.nombre
@@ -77,9 +85,8 @@ export default function MapView() {
     }
     
     // Vista general usando el nombre de la ciudad
-    const ciudad = userData.selectedCity || userData.detectedCity
-    if (ciudad) {
-      return `https://maps.google.com/maps?q=${encodeURIComponent(ciudad.city || ciudad.name)}&hl=es&z=12&t=k&output=embed`
+    if (targetCity) {
+      return `https://maps.google.com/maps?q=${encodeURIComponent(getCityName())}&hl=es&z=12&t=k&output=embed`
     }
     
     return ''
@@ -88,9 +95,6 @@ export default function MapView() {
   const handlePointClick = (index) => {
     dispatch(setSelectedPoint(index))
   }
-
-  // Acceso a userData para la vista general
-  const userData = useSelector(state => state.tour)
 
   return (
     <div className="map-view">

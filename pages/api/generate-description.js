@@ -34,7 +34,9 @@ Genera SOLO el texto de la descripción, sin JSON ni formato adicional.`
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: prompt,
-        sessionId: `desc-${Date.now()}`
+        sessionId: `desc-${Date.now()}`,
+        max_tokens: 2048,
+        temperature: 0
       }),
       signal: controller.signal
     })
@@ -47,7 +49,27 @@ Genera SOLO el texto de la descripción, sin JSON ni formato adicional.`
 
     const data = await response.json()
     
-    const aiResponse = data.output || data.data?.text || 'Lugar de interés turístico con gran valor histórico y cultural.'
+    let aiResponse = data.output || data.data?.text || ''
+    
+    // Limpiar la respuesta: quitar fences de markdown y texto de relleno
+    aiResponse = aiResponse
+      .replace(/```json/gi, '')
+      .replace(/```/g, '')
+      .trim()
+    
+    // Si vino como JSON estructurado, intentar extraer el texto/descripcion
+    if (aiResponse.startsWith('{') || aiResponse.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(aiResponse)
+        aiResponse = parsed.description || parsed.text || parsed.respuesta || parsed.data?.text || ''
+      } catch (e) {
+        // Si no es JSON válido, mantener el texto crudo (ya limpiado)
+      }
+    }
+    
+    if (!aiResponse) {
+      aiResponse = 'Lugar de interés turístico con gran valor histórico y cultural.'
+    }
     
     res.status(200).json({ 
       description: aiResponse

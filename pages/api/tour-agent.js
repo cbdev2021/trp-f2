@@ -123,260 +123,264 @@ export default async function handler(req, res) {
     
     const geoScope = determineGeographicScope(userData, cityName, countryName)
     
-    const prompt = `You are a professional travel guide creating a route for ${cityName.toUpperCase()}, ${countryName.toUpperCase()}.
+    // Sanitizar un punto (garantiza campos mínimos / coordenadas)
+    const sanitizePoint = (punto, index) => {
+      const nombre = (punto.nombre || punto.name || '').replace(/undefined\s*/gi, '').trim() || 'Punto de interés'
+      const lugarFisico = (punto.lugar_fisico || punto.address || nombre).replace(/undefined\s*/gi, '').trim() || nombre
+      const lat = parseFloat(punto.coordenadas?.lat || punto.lat || punto.latitude)
+      const lon = parseFloat(punto.coordenadas?.lon || punto.coordenadas?.lng || punto.lon || punto.longitude)
+      const sinTrailing = (v) => isNaN(v) ? null : parseFloat(v.toFixed(6))
+      return {
+        orden: punto.orden || index + 1,
+        nombre,
+        lugar_fisico: lugarFisico,
+        tipo: punto.tipo || punto.category || 'lugar de interés',
+        tiempo: punto.tiempo || punto.time || punto.horarios || `${9 + (index % 10)}:00-${10 + (index % 10)}:00`,
+        descripcion: (punto.descripcion || punto.description || '').replace(/undefined\s*/gi, '').trim() || `Visita a ${nombre}`,
+        coordenadas: {
+          lat: sinTrailing(lat) ?? (ciudad?.lat || -33.4489),
+          lon: sinTrailing(lon) ?? (ciudad?.lon || -70.6693)
+        },
+        costo_estimado: punto.costo_estimado ?? '$0',
+        duracion_min: punto.duracion_min || punto.duracion || 90,
+        wikipedia_url: punto.wikipedia_url || '',
+        wikipedia_image_url: punto.wikipedia_image_url || ''
+      }
+    }
 
-🎯 ROUTE REQUIREMENTS:
-- Geographic Area: ${cityName} + 360km radius
-- Starting Point: ${puntoInicio?.direccion}
-- Duration: ${itinerario.diasTotales} days, ${itinerario.horasDiarias} per day
-- Total Activities: EXACTLY ${itinerario.totalActividades} activities
-- Activities per Day: ${itinerario.actividadesPorDia}
-- User Preferences: ${criticalPromptModifiers}
+    // Extraer y parsear el JSON de la respuesta del chatbot de forma robusta:
+    // descarta BOM, fences markdown, tags de razonamiento y texto previo.
+    const extraerTourData = (aiResponse) => {
+      let cleanOutput = (aiResponse || '')
+        .replace(/^\uFEFF/, '')
+        .replace(/```json/g, '')
+        .replace(/```/g, '')
+        .replace(/\/\/.*$/gm, '')
+        .replace(/<(thinking|reasoning|thought)[\s\S]*?<\/\1>/gi, '')
+        .trim()
 
-📍 GEOGRAPHIC RULES:
-- Include places within 360km radius from ${cityName}
-- Prioritize places in ${cityName} first (60-70% of activities)
-- Include nearby cities/attractions for variety (30-40%)
-- Ensure logical travel flow and distances
+      // Buscar la primera '[' o '{' que inicie el JSON real (después de cualquier razonamiento)
+      let startIdx = cleanOutput.indexOf('{')
+      // Preferir el objeto que contenga "titulo" o "ruta"
+      const tituloIdx = cleanOutput.indexOf('"titulo"')
+      const rutaIdx = cleanOutput.indexOf('"ruta"')
+      if (tituloIdx !== -1) {
+        const brace = cleanOutput.lastIndexOf('{', tituloIdx)
+        if (brace !== -1 && (startIdx === -1 || brace < startIdx)) startIdx = brace
+      } else if (rutaIdx !== -1) {
+        const brace = cleanOutput.lastIndexOf('{', rutaIdx)
+        if (brace !== -1 && (startIdx === -1 || brace < startIdx)) startIdx = brace
+      }
+      const endIdx = cleanOutput.lastIndexOf('}')
+      if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) return null
 
-🎯 EXPERIENCE DISTRIBUTION (MANDATORY):
+      cleanOutput = cleanOutput.substring(startIdx, endIdx + 1)
+
+      // Intentos de parseo
+      try {
+        return JSON.parse(cleanOutput)
+      } catch (e1) {
+        // Reparación: vaciar URLs rotas y compactar
+        const reparado = cleanOutput
+          .replace(/"wikipedia_url"\s*:\s*"[^"]*"/g, '"wikipedia_url":""')
+          .replace(/"wikipedia_image_url"\s*:\s*"[^"]*"/g, '"wikipedia_image_url":""')
+          .replace(/\s+/g, ' ')
+        try {
+          return JSON.parse(reparado)
+        } catch (e2) {
+          // Extración mínima con regex
+          const nombres = [...cleanOutput.matchAll(/"nombre"\s*:\s*"([^"]+)"/g)].map(m => m[1])
+          const tipos = [...cleanOutput.matchAll(/"tipo"\s*:\s*"([^"]+)"/g)].map(m => m[1])
+          const tiempos = [...cleanOutput.matchAll(/"tiempo"\s*:\s*"([^"]+)"/g)].map(m => m[1])
+          const descripciones = [...cleanOutput.matchAll(/"descripcion"\s*:\s*"([^"]*?)"/g)].map(m => m[1])
+          const lats = [...cleanOutput.matchAll(/"lat"\s*:\s*([\d.-]+)/g)].map(m => parseFloat(m[1]))
+          const lons = [...cleanOutput.matchAll(/"lon"\s*:\s*([\d.-]+)/g)].map(m => parseFloat(m[1]))
+          if (nombres.length === 0) return null
+          return {
+            titulo: `Ruta Turística por ${cityName}`,
+            ruta: nombres.map((nombre, i) => ({
+              orden: i + 1,
+              nombre,
+              lugar_fisico: nombre,
+              tipo: tipos[i] || 'lugar de interés',
+              tiempo: tiempos[i] || `${9 + i}:00-${10 + i}:00`,
+              descripcion: descripciones[i] || `Visita a ${nombre}`,
+              coordenadas: { lat: lats[i] || ciudad?.lat || -33.4489, lon: lons[i] || ciudad?.lon || -70.6693 },
+              costo_estimado: '$0',
+              duracion_min: 90,
+              wikipedia_url: '',
+              wikipedia_image_url: ''
+            }))
+          }
+        }
+      }
+    }
+
+    // Llamar al chatbot con reintento ante 5xx
+    const chatTurismo = async (mensaje, subId) => {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 600000)
+      let response = await fetch('http://localhost:10000/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: mensaje,
+          sessionId: sessionId || `ruta-${Date.now()}-${subId || ''}`,
+          max_tokens: 8192,
+          temperature: 0
+        }),
+        signal: controller.signal
+      })
+      if (!response.ok && response.status >= 500) {
+        console.log('[TOUR-10.1] 🔁 Reintentando tras error', response.status);
+        clearTimeout(timeoutId)
+        const retryController = new AbortController()
+        const retryTimeoutId = setTimeout(() => retryController.abort(), 600000)
+        const retry = await fetch('http://localhost:10000/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: mensaje,
+            sessionId: sessionId || `ruta-${Date.now()}-${subId || ''}-retry`,
+            max_tokens: 8192,
+            temperature: 0
+          }),
+          signal: retryController.signal
+        })
+        clearTimeout(retryTimeoutId)
+        response = retry
+      }
+      clearTimeout(timeoutId)
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+      const data = await response.json()
+      return data.output || data.data?.text || ''
+    }
+
+    const baseDatos = {
+      ciudad: cityName,
+      pais: countryName,
+      preferencias: criticalPromptModifiers,
+      inicio: puntoInicio?.direccion,
+      lat: ciudad?.lat || puntoInicio?.coordenadas?.lat || -33.4489,
+      lon: ciudad?.lon || puntoInicio?.coordenadas?.lon || -70.6693,
+      duracionPreferida: itinerario.horasDiarias,
+      minutosPorDia: itinerario.minutosPorDia
+    }
+
+    const generarPromptDia = (diaIndex, nActividades = itinerario.actividadesPorDia) => `You are a professional travel guide creating ONLY the activities for DAY ${diaIndex} of a trip to ${cityName.toUpperCase()}, ${countryName.toUpperCase()}.
+
+🎯 CONTEXT:
+- City: ${cityName} (plus nearby places within 360km for variety)
+- Day number: ${diaIndex} of ${itinerario.diasTotales}
+- Starting point of the trip: ${puntoInicio?.direccion || 'City center'}
+- Daily time budget: ${itinerario.minutosPorDia} minutes (${itinerario.horasDiarias})
+
+🎯 USER PREFERENCES:
 ${criticalPromptModifiers}
-- STRICTLY follow the 80/20 distribution
-- Match activities to user's experience preferences
-- Respect all restrictions mentioned
 
-📋 ACTIVITY REQUIREMENTS:
-- Each activity: 60-120 minutes
-- Travel time between activities: 15-30 minutes
-- Total daily time: ${itinerario.minutosPorDia} minutes (${itinerario.horasDiarias})
-- Generate EXACTLY ${itinerario.totalActividades} activities
-
-✅ INCLUDE:
-- Major museums, monuments, landmarks
-- Historic sites, cathedrals, palaces
-- UNESCO sites, famous parks
-- Cultural centers matching user preferences
-
-❌ EXCLUDE:
-- Restaurants, bars, nightlife (unless user specifically requested)
-- Shopping centers, hotels
-- Generic facilities without significance
-
-INSTRUCTIONS:
-1. Generate EXACTLY ${itinerario.totalActividades} activities
-2. Distribute ${itinerario.actividadesPorDia} activities per day
-3. Match ${criticalPromptModifiers} preferences
-4. Stay within 360km radius
-5. "wikipedia_url" and "wikipedia_image_url": use empty strings ""
-6. NO comments in JSON
+📋 REQUIREMENTS FOR THIS DAY ONLY:
+- Generate EXACTLY ${nActividades} activities (60-120 minutes each)
+- They must be DIFFERENT from any other day's activities
+- Match user preferences
+- Prioritize ${cityName}; include some nearby cities/attractions for variety (30-40%)
+- "wikipedia_url" and "wikipedia_image_url": use empty strings ""
+- NO comments in JSON
+- Logical travel flow and reasonable times
 
 JSON RESPONSE (COMPLETE, NO COMMENTS):
 {
-  "titulo": "Ruta Turística por ${cityName}",
-  "duracion": "${itinerario.diasTotales} día(s)",
   "ruta": [
     {
       "orden": 1,
-      "nombre": "${puntoInicio?.direccion || 'Punto de Inicio'}",
-      "lugar_fisico": "${puntoInicio?.direccion || 'Punto de Inicio'}",
+      "nombre": "Activity Name",
+      "lugar_fisico": "Physical Address",
       "wikipedia_url": "",
       "wikipedia_image_url": "",
-      "tipo": "${puntoInicio?.categoria || 'punto de inicio'}",
-      "tiempo": "${fechaHoraInicio.split('T')[1] || '09:00'}-${fechaHoraInicio.split('T')[1] || '09:30'}",
-      "descripcion": "${puntoInicio?.descripcion || 'Punto de partida de la ruta'}",
-      "coordenadas": {"lat": ${puntoInicio?.coordenadas?.lat || ciudad?.lat || -33.4489}, "lon": ${puntoInicio?.coordenadas?.lon || ciudad?.lon || -70.6693}},
+      "tipo": "type",
+      "tiempo": "10:00-11:30",
+      "descripcion": "short description",
+      "coordenadas": {"lat": -33.4489, "lon": -70.6693},
       "costo_estimado": "$0",
-      "duracion_min": 30
+      "duracion_min": 90
     }
-  ],
-  "costo_total_estimado": "$0",
-  "dias_totales": ${itinerario.diasTotales},
-  "actividades_por_dia": ${itinerario.actividadesPorDia},
-  "minutos_por_dia": ${itinerario.minutosPorDia}
+  ]
 }
 
-Generate complete valid JSON with ALL ${itinerario.totalActividades} activities. NO comments.`
+Generate complete valid JSON with EXACTLY ${nActividades} activities for DAY ${diaIndex}. NO comments.`
 
-    console.log('[TOUR-8] 📝 Prompt generado, length:', prompt.length);
+    console.log('[TOUR-10] 🚀 Generando ruta por días vía http://localhost:10000/chat');
 
-    // Send to AI
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => {
-      console.log('[TOUR-9] ⏱️ TIMEOUT alcanzado (10min)');
-      controller.abort()
-    }, 600000)
-    
-    console.log('[TOUR-10] 🚀 Llamando a IA en http://localhost:10000/chat');
-    
-    const response = await fetch('http://localhost:10000/chat', { 
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: prompt,
-        sessionId: sessionId || `ruta-${Date.now()}`
-      }),
-      signal: controller.signal
-    })
-    
-    clearTimeout(timeoutId)
-    console.log('[TOUR-11] 📡 Respuesta recibida, status:', response.status);
+    let rutasUnidas = []
+    let diasOK = 0
 
-    if (!response.ok) {
-      console.log('[TOUR-12] ❌ Respuesta no OK:', response.status, response.statusText);
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-
-    console.log('[TOUR-13] ✅ Respuesta OK, parseando...');
-    const data = await response.json()
-    console.log('[TOUR-14] 📊 JSON de respuesta parseado, keys:', Object.keys(data));
-    
-    // Parse AI response con reparación (como n8n)
-    let tourData
-    try {
-      const aiResponse = data.output || data.data?.text || ''
-      console.log('[TOUR-15] 📦 AI Response extraído, length:', aiResponse.length);
-      
-      if (aiResponse) {
-        // Limpieza básica (como n8n)
-        let cleanOutput = aiResponse
-          .replace(/```json/g, '')
-          .replace(/```/g, '')
-          .replace(/\/\/.*$/gm, '')  // Eliminar comentarios
-          .replace(/[\n\r\t]/g, ' ')  // Eliminar saltos de línea
-          .trim()
-        
-        console.log('[TOUR-16] 🧹 Output limpiado, length:', cleanOutput.length);
-        
-        // Extract JSON
-        const jsonMatch = cleanOutput.match(/{[\s\S]*}/)
-        if (jsonMatch) {
-          cleanOutput = jsonMatch[0]
-          console.log('[TOUR-17] 🔍 JSON extraído con regex');
-        }
-        
-        console.log('[TOUR-18] 🔄 Intentando parsear JSON...');
-        
-        // Intentar parsear
-        try {
-          tourData = JSON.parse(cleanOutput)
-          console.log('[TOUR-19] ✅ JSON parseado exitosamente, ruta length:', tourData.ruta?.length);
-        } catch (parseError) {
-          console.log('[TOUR-20] ⚠️ Parseo falló, aplicando reparación...');
-          console.log('[TOUR-20.1] 🔍 Error:', parseError.message);
-          
-          // Reparación (como n8n): eliminar URLs rotas
-          cleanOutput = cleanOutput
-            .replace(/"wikipedia_url"\s*:\s*"[^"]*"/g, '"wikipedia_url":""')
-            .replace(/"wikipedia_image_url"\s*:\s*"[^"]*"/g, '"wikipedia_image_url":""')
-            .replace(/\s+/g, ' ')
-          
-          console.log('[TOUR-21] 🔧 Reparación aplicada, reintentando parseo...');
-          
+    for (let dia = 1; dia <= itinerario.diasTotales; dia++) {
+      let diaResuelto = false
+      const intentarDia = async (nAct, sufijo, maxIntentos) => {
+        for (let intento = 1; intento <= maxIntentos; intento++) {
           try {
-            tourData = JSON.parse(cleanOutput)
-            console.log('[TOUR-22] ✅ JSON reparado y parseado exitosamente');
-          } catch (repairError) {
-            console.log('[TOUR-22.1] ❌ Reparación falló, extrayendo manualmente...');
-            
-            // EXTRACCIÓN MANUAL: Extraer lo que se pueda con regex
-            try {
-              const nombres = [...cleanOutput.matchAll(/"nombre"\s*:\s*"([^"]+)"/g)].map(m => m[1])
-              const tipos = [...cleanOutput.matchAll(/"tipo"\s*:\s*"([^"]+)"/g)].map(m => m[1])
-              const tiempos = [...cleanOutput.matchAll(/"tiempo"\s*:\s*"([^"]+)"/g)].map(m => m[1])
-              const descripciones = [...cleanOutput.matchAll(/"descripcion"\s*:\s*"([^"]*?)"/g)].map(m => m[1])
-              const lats = [...cleanOutput.matchAll(/"lat"\s*:\s*([\d.-]+)/g)].map(m => parseFloat(m[1]))
-              const lons = [...cleanOutput.matchAll(/"lon"\s*:\s*([\d.-]+)/g)].map(m => parseFloat(m[1]))
-              
-              console.log('[TOUR-22.2] 📊 Extraídos:', { nombres: nombres.length, lats: lats.length });
-              
-              if (nombres.length > 0) {
-                tourData = {
-                  titulo: `Ruta Turística por ${cityName}`,
-                  duracion: `${itinerario.diasTotales} día(s)`,
-                  ruta: nombres.map((nombre, i) => ({
-                    orden: i + 1,
-                    nombre: nombre,
-                    lugar_fisico: nombre,
-                    tipo: tipos[i] || 'lugar de interés',
-                    tiempo: tiempos[i] || `${9 + i}:00-${10 + i}:00`,
-                    descripcion: descripciones[i] || `Visita a ${nombre}`,
-                    coordenadas: {
-                      lat: lats[i] || ciudad?.lat || -33.4489,
-                      lon: lons[i] || ciudad?.lon || -70.6693
-                    },
-                    costo_estimado: '$0',
-                    duracion_min: 90,
-                    wikipedia_url: '',
-                    wikipedia_image_url: ''
-                  })),
-                  costo_total_estimado: '$0',
-                  dias_totales: itinerario.diasTotales,
-                  actividades_por_dia: itinerario.actividadesPorDia,
-                  minutos_por_dia: itinerario.minutosPorDia
-                }
-                console.log('[TOUR-22.3] ✅ Datos extraídos manualmente:', tourData.ruta.length, 'actividades');
-              } else {
-                throw repairError
-              }
-            } catch (extractError) {
-              console.log('[TOUR-22.4] ❌ Extracción manual falló');
-              throw parseError
+            console.log(`[TOUR-10.2] 📅 Pidiendo día ${dia}/${itinerario.diasTotales} (${sufijo}, intento ${intento})`);
+            const aiResponse = await chatTurismo(generarPromptDia(dia, nAct), `${sufijo}-${intento}`)
+            const tourDia = extraerTourData(aiResponse)
+            if (tourDia && Array.isArray(tourDia.ruta) && tourDia.ruta.length > 0) {
+              rutasUnidas = rutasUnidas.concat(tourDia.ruta)
+              diasOK++
+              console.log(`[TOUR-10.3] ✅ Día ${dia} OK, acumulado: ${rutasUnidas.length}`);
+              return true
             }
+            console.log(`[TOUR-10.4] ⚠️ Día ${dia} sin resultados (${sufijo}, intento ${intento})`);
+          } catch (e) {
+            console.log(`[TOUR-10.5] ❌ Error en día ${dia} (${sufijo}, intento ${intento}): ${e.message}`);
           }
+          const backoff = [0, 800, 2000][intento - 1] ?? 2500
+          if (intento < maxIntentos) await new Promise(r => setTimeout(r, backoff))
         }
-        
-        // Clean data
-        if (tourData.ruta) {
-          console.log('[TOUR-23] 🧹 Limpiando datos de ruta...');
-          tourData.ruta = tourData.ruta.map(punto => ({
-            ...punto,
-            nombre: punto.nombre?.replace(/undefined\s*/gi, '').trim() || 'Punto de interés',
-            lugar_fisico: punto.lugar_fisico?.replace(/undefined\s*/gi, '').trim() || punto.nombre,
-            descripcion: punto.descripcion?.replace(/undefined\s*/gi, '').trim() || 'Descripción no disponible',
-            wikipedia_url: punto.wikipedia_url || '',
-            wikipedia_image_url: punto.wikipedia_image_url || ''
-          }))
-          console.log('[TOUR-24] ✅ Datos limpiados');
-        }
-        
-      } else {
-        console.log('[TOUR-25] ❌ No hay output de IA');
-        throw new Error('No output received')
+        return false
       }
-    } catch (error) {
-      console.error('[TOUR-26] 💥 ERROR en parseo:', {
-        name: error.name,
-        message: error.message,
-        stack: error.stack?.split('\n')[0]
-      });
-      
-      console.log('[TOUR-27] 🔄 Usando fallback...');
-      // Fallback
-      tourData = {
-        titulo: `Ruta Turística por ${cityName}`,
-        duracion: `${itinerario.diasTotales} día(s)`,
-        ruta: [{
-          orden: 1,
-          nombre: puntoInicio?.direccion || "Punto de inicio",
-          lugar_fisico: puntoInicio?.direccion || "Punto de inicio",
-          tipo: puntoInicio?.categoria || "punto de inicio",
-          tiempo: `${fechaHoraInicio.split('T')[1] || '09:00'}-${fechaHoraInicio.split('T')[1] || '09:30'}`,
-          descripcion: puntoInicio?.descripcion || "Punto de partida de la ruta",
-          coordenadas: { 
-            lat: puntoInicio?.coordenadas?.lat || ciudad?.lat || -33.4489, 
-            lon: puntoInicio?.coordenadas?.lon || ciudad?.lon || -70.6693 
-          },
-          costo_estimado: "$0",
-          duracion_min: 30
-        }],
-        costo_total_estimado: "$25000",
-        dias_totales: itinerario.diasTotales,
-        actividades_por_dia: itinerario.actividadesPorDia,
-        minutos_por_dia: itinerario.minutosPorDia,
-        consejos: [`Comenzar puntualmente en ${puntoInicio?.direccion}`, "Llevar agua"]
+
+      // Primero con el tamaño completo de actividades por día
+      diaResuelto = await intentarDia(itinerario.actividadesPorDia, 'completo', 3)
+      // Si falla, reintentar pidiendo la mitad de actividades (más fiable)
+      if (!diaResuelto && itinerario.actividadesPorDia > 2) {
+        const mitad = Math.max(2, Math.ceil(itinerario.actividadesPorDia / 2))
+        console.log(`[TOUR-10.6] 🔽 Día ${dia}: reintentando con ${mitad} actividades`);
+        await intentarDia(mitad, `reducido-${mitad}`, 2)
       }
     }
-    
+
+    console.log('[TOUR-28] 📊 Ruta generada, actividades:', rutasUnidas.length, 'diasOK:', diasOK);
+
+    if (rutasUnidas.length === 0) {
+      // Fallback de emergencia: al menos el punto de inicio
+      rutasUnidas = [{
+        orden: 1,
+        nombre: puntoInicio?.direccion || "Punto de inicio",
+        lugar_fisico: puntoInicio?.direccion || "Punto de inicio",
+        tipo: puntoInicio?.categoria || "punto de inicio",
+        tiempo: `${fechaHoraInicio.split('T')[1] || '09:00'}-${fechaHoraInicio.split('T')[1] || '09:30'}`,
+        descripcion: puntoInicio?.descripcion || "Punto de partida de la ruta",
+        coordenadas: {
+          lat: puntoInicio?.coordenadas?.lat || ciudad?.lat || -33.4489,
+          lon: puntoInicio?.coordenadas?.lon || ciudad?.lon || -70.6693
+        },
+        costo_estimado: "$0",
+        duracion_min: 30
+      }]
+      console.log('[TOUR-27] 🔄 Usando fallback de emergencia (punto de inicio)');
+    }
+
+    rutasUnidas = rutasUnidas.map(sanitizePoint)
+
+    const tourData = {
+      titulo: `Ruta Turística por ${cityName}`,
+      duracion: `${itinerario.diasTotales} día(s)`,
+      ruta: rutasUnidas,
+      costo_total_estimado: '$0',
+      dias_totales: itinerario.diasTotales,
+      actividades_por_dia: itinerario.actividadesPorDia,
+      minutos_por_dia: itinerario.minutosPorDia,
+      consejos: [`Comenzar puntualmente en ${puntoInicio?.direccion || cityName}`, "Llevar agua"]
+    }
+
     console.log('[TOUR-28] ✅ Enviando respuesta exitosa, ruta length:', tourData.ruta?.length);
     res.status(200).json(tourData)
     
